@@ -1,0 +1,4 @@
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+challenge_images/
+public_data/
