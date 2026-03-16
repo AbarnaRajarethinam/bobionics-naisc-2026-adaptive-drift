@@ -50,16 +50,31 @@ def print_initialization(train_df, test_df, categorical_cols, numerical_cols):
     print(f"Total Features Analysed   : {len(categorical_cols) + len(numerical_cols)}")
     print(f"Categorical Features      : {len(categorical_cols)}")
     print(f"Numerical Features        : {len(numerical_cols)}")
+    print("Comparing Train vs Production Distributions")
 
     print("\nRunning Drift Detection Engine...")
     print("--------------------------------------------------------\n")
 
 
-def print_drift_report(drift_table, runtime):
+def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
+
+    drift_table = drift_table.copy()
 
     drift_table["Severity"] = drift_table["PSI"].apply(classify_severity)
 
+    def get_feature_type(feature):
+        if feature in categorical_cols:
+            return "Categorical"
+        elif feature in numerical_cols:
+            return "Numerical"
+        else:
+            return "Unknown"
+
+    drift_table["Feature_Type"] = drift_table["Feature"].apply(get_feature_type)
+
     drifted = drift_table[drift_table["Drift_Detected"] == True]
+    drifted_num = drifted[drifted["Feature_Type"] == "Numerical"].shape[0]
+    drifted_cat = drifted[drifted["Feature_Type"] == "Categorical"].shape[0]
 
     score = calculate_dataset_score(drift_table)
 
@@ -81,7 +96,13 @@ def print_drift_report(drift_table, runtime):
     print("========================================================\n")
 
     print(f"Dataset Drift Score      : {score:.3f}")
-    print(f"Drifted Features         : {len(drifted)} / {len(drift_table)}\n")
+    print(f"Drifted Features         : {len(drifted)} / {len(drift_table)}")
+
+    coverage = (len(drift_table) / len(drift_table)) * 100
+    print(f"Monitoring Coverage      : {coverage:.0f}%")
+
+    print(f"Drifted Numerical Features   : {drifted_num}")
+    print(f"Drifted Categorical Features : {drifted_cat}\n")
 
     print("Severity Breakdown")
     print("--------------------------------------------------------")
@@ -99,8 +120,10 @@ def print_drift_report(drift_table, runtime):
 
         icon = severity_icon(row["Severity"])
 
+        feature_label = f"{row['Feature']} ({row['Feature_Type']})"
+
         print(
-            f"{i:2d}. {row['Feature']:30} "
+            f"{i:2d}. {feature_label:40} "
             f"PSI={row['PSI']:.3f}   "
             f"{icon} {row['Severity']}"
         )
@@ -196,7 +219,12 @@ def main():
 
     runtime = time.time() - start
 
-    print_drift_report(drift_table, runtime)
+    print_drift_report(
+        drift_table,
+        categorical_cols,
+        numerical_cols,
+        runtime
+    )
 
     save_summary_file(drift_table)
 
