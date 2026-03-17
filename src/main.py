@@ -5,7 +5,7 @@ import time
 
 from drift_detector import detect_dataset_drift
 from visualization import launch_dashboard, save_static_dashboard
-from mitigation import mitigate_categorical_drift
+from mitigation import mitigate_categorical_drift, mitigate_numerical_drift
 
 
 def classify_severity(psi):
@@ -214,8 +214,6 @@ def main():
         numerical_cols
     )
 
-
-
     os.makedirs("outputs", exist_ok=True)
 
     drift_table.to_csv("outputs/drift_table.csv", index=False)
@@ -233,12 +231,30 @@ def main():
 
     save_static_dashboard(drift_table)
 
-    prod_df, mitigation_actions = mitigate_categorical_drift(
+    # ==========================================================
+    # DRIFT MITIGATION
+    # ==========================================================
+
+    # --- Categorical Mitigation ---
+    prod_df, cat_actions = mitigate_categorical_drift(
         train_df,
         test_df,
         drift_table,
         categorical_cols
     )
+
+    # --- Numerical Mitigation ---
+    prod_df, num_actions = mitigate_numerical_drift(
+        train_df,
+        prod_df,
+        drift_table,
+        numerical_cols
+    )
+
+    mitigation_actions = {
+        "categorical": cat_actions,
+        "numerical": num_actions
+    }
 
     print("Launching Interactive Monitoring Dashboard...")
     print("http://127.0.0.1:8050\n")
