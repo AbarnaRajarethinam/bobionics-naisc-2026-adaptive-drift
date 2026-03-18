@@ -7,6 +7,10 @@ from drift_detector import detect_dataset_drift
 from visualization import launch_dashboard, save_static_dashboard
 from mitigation import mitigate_categorical_drift, mitigate_numerical_drift
 
+from lightgbm import LGBMClassifier
+from sklearn.metrics import average_precision_score
+import joblib
+
 
 def classify_severity(psi):
 
@@ -31,7 +35,7 @@ def severity_icon(level):
 
 def calculate_dataset_score(drift_table):
 
-    return drift_table["PSI"].mean()
+    return drift_table["PSI"].clip(upper=1).mean()
 
 
 def print_system_header():
@@ -174,6 +178,55 @@ def save_summary_file(drift_table):
             f.write(f"{row['Feature']} | PSI={row['PSI']:.3f}\n")
 
 
+def train_and_evaluate(train_df, test_df, weight_source_df=None):
+    target = "ChurnStatus"
+
+    # --- Prepare data ---
+    X_train = train_df.drop(columns=[target, "CustomerID"], errors="ignore")
+    y_train = train_df[target].map({"Yes": 1, "No": 0})
+
+    X_test = test_df.drop(columns=[target, "CustomerID"], errors="ignore")
+
+    # Ensure same columns
+    X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
+
+    # Convert categorical columns to category dtype
+    for col in X_train.select_dtypes(include="object").columns:
+        X_train[col] = X_train[col].astype("category")
+        X_test[col] = X_test[col].astype("category")
+
+    # Align category sets between train and test
+    for col in X_train.select_dtypes(include="category").columns:
+        X_test[col] = X_test[col].cat.set_categories(X_train[col].cat.categories)
+
+    # --- Model (FIXED PARAMS) ---
+    model = LGBMClassifier(
+        verbosity=-1,
+        objective="binary",
+        is_unbalance=True,
+        random_state=42,
+        importance_type="gain"
+    )
+
+    # --- Train ---
+    if weight_source_df is not None:
+        weight_cols = [col for col in weight_source_df.columns if "_weight" in col]
+        sample_weights = weight_source_df[weight_cols].mean(axis=1) if weight_cols else None
+    else:
+        sample_weights = None
+
+    model.fit(X_train, y_train, sample_weight=sample_weights)
+
+    # --- Evaluate on TRAIN (required) ---
+    train_probs = model.predict_proba(X_train)[:, 1]
+    train_auprc = average_precision_score(y_train, train_probs)
+
+    # --- Predict on TEST ---
+    test_probs = model.predict_proba(X_test)[:, 1]
+
+    return model, train_auprc, test_probs
+
+
 def main():
 
     parser = argparse.ArgumentParser()
@@ -256,12 +309,60 @@ def main():
         "numerical": num_actions
     }
 
+    print("\nMitigation Summary")
+    print("--------------------------------------------------------")
+
+    for f, info in cat_actions.items():
+        print(f"{f} → {info['method']}")
+
+    for f, info in num_actions.items():
+        print(f"{f} → {info['method']}")
+
+    print(f"\nTotal mitigated features: {len(cat_actions) + len(num_actions)}")
+
+    # ==========================================================
+    # MODEL TRAINING & EVALUATION
+    # ==========================================================
+
+    print("\nTraining Model...\n")
+
+    model, train_auprc, test_probs = train_and_evaluate(
+        train_df,
+        prod_df,
+        weight_source_df=None
+    )
+
+    print("========================================================")
+    print(" MODEL PERFORMANCE")
+    print("========================================================\n")
+
+    print(f"Train AU-PRC : {train_auprc:.4f}")
+
+    # Save model
+    joblib.dump(model, "model.joblib")
+
+    # Save predictions
+    pred_df = pd.DataFrame({
+        "CustomerID": test_df.get("CustomerID", range(len(test_df))),
+        "probability_score": test_probs
+    })
+
+    pred_df.to_csv("prediction.csv", index=False)
+
+    print("\nArtifacts Generated")
+    print("--------------------------------------------------------")
+    print("model.joblib")
+    print("prediction.csv")
+    if "ChurnStatus" in test_df.columns:
+        y_test = test_df["ChurnStatus"].map({"Yes": 1, "No": 0})
+        test_auprc = average_precision_score(y_test, test_probs)
+        print(f"Test AU-PRC  : {test_auprc:.4f}")
+
     print("Launching Interactive Monitoring Dashboard...")
     print("http://127.0.0.1:8050\n")
-
     launch_dashboard(
         train_df,
-        test_df,
+        prod_df,
         drift_table,
         categorical_cols,
         numerical_cols
