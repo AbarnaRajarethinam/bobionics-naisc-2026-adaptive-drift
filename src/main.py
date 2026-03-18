@@ -181,25 +181,20 @@ def save_summary_file(drift_table):
 def train_and_evaluate(train_df, test_df, weight_source_df=None):
     target = "ChurnStatus"
 
-    # --- Prepare data ---
     X_train = train_df.drop(columns=[target, "CustomerID"], errors="ignore")
     y_train = train_df[target].map({"Yes": 1, "No": 0})
 
     X_test = test_df.drop(columns=[target, "CustomerID"], errors="ignore")
 
-    # Ensure same columns
     X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
 
-    # Convert categorical columns to category dtype
     for col in X_train.select_dtypes(include="object").columns:
         X_train[col] = X_train[col].astype("category")
         X_test[col] = X_test[col].astype("category")
 
-    # Align category sets between train and test
     for col in X_train.select_dtypes(include="category").columns:
         X_test[col] = X_test[col].cat.set_categories(X_train[col].cat.categories)
 
-    # --- Model (FIXED PARAMS) ---
     model = LGBMClassifier(
         verbosity=-1,
         objective="binary",
@@ -208,7 +203,6 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None):
         importance_type="gain"
     )
 
-    # --- Train ---
     if weight_source_df is not None:
         weight_cols = [col for col in weight_source_df.columns if "_weight" in col]
         sample_weights = weight_source_df[weight_cols].mean(axis=1) if weight_cols else None
@@ -217,11 +211,9 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None):
 
     model.fit(X_train, y_train, sample_weight=sample_weights)
 
-    # --- Evaluate on TRAIN (required) ---
     train_probs = model.predict_proba(X_train)[:, 1]
     train_auprc = average_precision_score(y_train, train_probs)
 
-    # --- Predict on TEST ---
     test_probs = model.predict_proba(X_test)[:, 1]
 
     return model, train_auprc, test_probs
@@ -285,10 +277,28 @@ def main():
     save_static_dashboard(drift_table)
 
     # ==========================================================
+    # BASELINE MODEL (BEFORE MITIGATION)
+    # ==========================================================
+
+    print("\nTraining Baseline Model (Before Mitigation)...\n")
+
+    baseline_model, baseline_train_auprc, baseline_test_probs = train_and_evaluate(
+        train_df,
+        test_df,
+        weight_source_df=None
+    )
+
+    print(f"Baseline Train AU-PRC : {baseline_train_auprc:.4f}")
+
+    if "ChurnStatus" in test_df.columns:
+        y_test = test_df["ChurnStatus"].map({"Yes": 1, "No": 0})
+        baseline_test_auprc = average_precision_score(y_test, baseline_test_probs)
+        print(f"Baseline Test AU-PRC  : {baseline_test_auprc:.4f}")
+
+    # ==========================================================
     # DRIFT MITIGATION
     # ==========================================================
 
-    # --- Categorical Mitigation ---
     prod_df, cat_actions = mitigate_categorical_drift(
         train_df,
         test_df,
@@ -296,18 +306,12 @@ def main():
         categorical_cols
     )
 
-    # --- Numerical Mitigation ---
     prod_df, num_actions = mitigate_numerical_drift(
         train_df,
         prod_df,
         drift_table,
         numerical_cols
     )
-
-    mitigation_actions = {
-        "categorical": cat_actions,
-        "numerical": num_actions
-    }
 
     print("\nMitigation Summary")
     print("--------------------------------------------------------")
@@ -321,10 +325,10 @@ def main():
     print(f"\nTotal mitigated features: {len(cat_actions) + len(num_actions)}")
 
     # ==========================================================
-    # MODEL TRAINING & EVALUATION
+    # MODEL AFTER MITIGATION
     # ==========================================================
 
-    print("\nTraining Model...\n")
+    print("\nTraining Model After Mitigation...\n")
 
     model, train_auprc, test_probs = train_and_evaluate(
         train_df,
@@ -333,15 +337,30 @@ def main():
     )
 
     print("========================================================")
-    print(" MODEL PERFORMANCE")
+    print(" MODEL PERFORMANCE COMPARISON")
     print("========================================================\n")
 
-    print(f"Train AU-PRC : {train_auprc:.4f}")
+    print(f"Baseline Train AU-PRC  : {baseline_train_auprc:.4f}")
+    print(f"Mitigated Train AU-PRC : {train_auprc:.4f}")
+
+    improvement = train_auprc - baseline_train_auprc
+    print(f"Train Improvement      : {improvement:+.4f}")
+
+    if "ChurnStatus" in test_df.columns:
+
+        y_test = test_df["ChurnStatus"].map({"Yes": 1, "No": 0})
+
+        mitigated_test_auprc = average_precision_score(y_test, test_probs)
+
+        print(f"\nBaseline Test AU-PRC   : {baseline_test_auprc:.4f}")
+        print(f"Mitigated Test AU-PRC  : {mitigated_test_auprc:.4f}")
+
+        improvement_test = mitigated_test_auprc - baseline_test_auprc
+        print(f"Test Improvement       : {improvement_test:+.4f}")
 
     # Save model
     joblib.dump(model, "model.joblib")
 
-    # Save predictions
     pred_df = pd.DataFrame({
         "CustomerID": test_df.get("CustomerID", range(len(test_df))),
         "probability_score": test_probs
@@ -353,13 +372,10 @@ def main():
     print("--------------------------------------------------------")
     print("model.joblib")
     print("prediction.csv")
-    if "ChurnStatus" in test_df.columns:
-        y_test = test_df["ChurnStatus"].map({"Yes": 1, "No": 0})
-        test_auprc = average_precision_score(y_test, test_probs)
-        print(f"Test AU-PRC  : {test_auprc:.4f}")
 
     print("Launching Interactive Monitoring Dashboard...")
     print("http://127.0.0.1:8050\n")
+
     launch_dashboard(
         train_df,
         prod_df,
