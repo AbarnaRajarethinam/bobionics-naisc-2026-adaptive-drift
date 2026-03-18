@@ -3,3 +3,5 @@ pandas
 scipy
 plotly
 dash
+lightgbm
+scikit-learn
