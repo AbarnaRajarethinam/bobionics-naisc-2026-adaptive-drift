@@ -56,42 +56,27 @@ def recalibrate_encoding(train_series, prod_series):
 def mitigate_categorical_drift(train_df, prod_df, drift_table, categorical_cols):
 
     prod_df = prod_df.copy()
-    mitigation_actions = {}
+    actions = {}
 
-    drifted = drift_table[drift_table["Drift_Detected"] == True]
+    drifted = set(drift_table[drift_table["Drift_Detected"] == True]["Feature"])
 
     for feature in categorical_cols:
 
-        if feature not in drifted["Feature"].values:
+        if feature not in drifted:
             continue
 
-        train_series = train_df[feature]
-        prod_series = prod_df[feature]
+        train_vals = set(train_df[feature].dropna().unique())
 
-        adjusted_series = adjust_distribution(train_series, prod_series)
-
-        weights = reweight_categories(train_series, adjusted_series)
-        weighted_series = apply_reweighting(adjusted_series, weights)
-
-        _, recalibrated_series, mapping = recalibrate_encoding(
-            train_series,
-            adjusted_series
+        # collapse unseen categories
+        prod_df[feature] = prod_df[feature].apply(
+            lambda x: x if x in train_vals else "Other"
         )
 
-        prod_df[feature] = adjusted_series
-
-        prod_df[f"{feature}_weight"] = weighted_series
-
-        prod_df[f"{feature}_encoded"] = recalibrated_series
-
-        mitigation_actions[feature] = {
-            "method": "adjustment + weight exposure + encoding recalibration",
-            "num_categories": len(mapping)
+        actions[feature] = {
+            "method": "rare category collapse only"
         }
 
-    return prod_df, mitigation_actions
-
-
+    return prod_df, actions
 # ==========================================================
 # NUMERICAL DRIFT MITIGATION
 # ==========================================================
@@ -143,46 +128,55 @@ def recalibrate_feature_scale(train_series, prod_series):
 
     return recalibrated
 
-
 def mitigate_numerical_drift(train_df, prod_df, drift_table, numerical_cols):
 
     prod_df = prod_df.copy()
-
     mitigation_actions = {}
 
-    drifted = drift_table[drift_table["Drift_Detected"] == True]
+    drifted = set(drift_table[drift_table["Drift_Detected"] == True]["Feature"])
 
     for feature in numerical_cols:
 
-        if feature not in drifted["Feature"].values:
+        if feature not in drifted:
             continue
 
-        train_series = train_df[feature]
-        prod_series = prod_df[feature]
+        train = train_df[feature]
+        prod = prod_df[feature]
 
-        # --- Step 1: Sample Reweighting ---
-        weight = compute_sample_weights(train_series, prod_series)
-        weighted_series = apply_numeric_reweighting(prod_series, weight)
+        # --------------------------------------------------
+        # STEP 1: measure drift severity
+        # --------------------------------------------------
+        drift_score = abs(train.mean() - prod.mean()) / (train.std() + 1e-6)
 
-        # --- Step 2: Normalization Adjustment ---
-        normalized_series = normalize_to_training_distribution(
-            train_series,
-            prod_series
-        )
+        # --------------------------------------------------
+        # STEP 2: choose ONLY ONE correction strategy
+        # --------------------------------------------------
 
-        # --- Step 3: Feature Recalibration ---
-        recalibrated_series = recalibrate_feature_scale(
-            train_series,
-            normalized_series
-        )
+        if drift_score < 0.5:
+            # light correction (safe)
+            adjusted = prod + (train.mean() - prod.mean()) * 0.2
+            method = "soft mean shift"
 
-        prod_df[feature] = recalibrated_series
+        elif drift_score < 1.5:
+            # moderate correction (alignment)
+            adjusted = (prod - prod.mean()) / (prod.std() + 1e-6)
+            adjusted = adjusted * train.std() + train.mean()
+            method = "standardization alignment"
 
-        prod_df[f"{feature}_weight"] = weighted_series
+        else:
+            # heavy drift → clipping only (VERY IMPORTANT)
+            lower = train.quantile(0.01)
+            upper = train.quantile(0.99)
+            adjusted = prod.clip(lower, upper)
+            method = "quantile clipping"
+
+        prod_df[feature] = adjusted
 
         mitigation_actions[feature] = {
-            "method": "sample_reweighting + normalization + feature_recalibration",
-            "weight_applied": weight
+            "method": method,
+            "drift_score": drift_score
         }
 
     return prod_df, mitigation_actions
+
+    
