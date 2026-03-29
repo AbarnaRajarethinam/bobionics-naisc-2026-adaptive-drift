@@ -1,5 +1,6 @@
 import argparse
 import pandas as pd
+import numpy as np
 import os
 import time
 
@@ -177,24 +178,55 @@ def save_summary_file(drift_table):
 
             f.write(f"{row['Feature']} | PSI={row['PSI']:.3f}\n")
 
-
 def train_and_evaluate(train_df, test_df, weight_source_df=None):
     target = "ChurnStatus"
 
+    # -------------------------------
+    # Split features + target
+    # -------------------------------
     X_train = train_df.drop(columns=[target, "CustomerID"], errors="ignore")
     y_train = train_df[target].map({"Yes": 1, "No": 0})
 
     X_test = test_df.drop(columns=[target, "CustomerID"], errors="ignore")
-
     X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
 
-    for col in X_train.select_dtypes(include="object").columns:
+    # -------------------------------
+    # Handle categorical features
+    # -------------------------------
+    cat_cols = X_train.select_dtypes(include=["object", "category", "string"]).columns
+
+    for col in cat_cols:
         X_train[col] = X_train[col].astype("category")
         X_test[col] = X_test[col].astype("category")
 
-    for col in X_train.select_dtypes(include="category").columns:
+        # align categories safely
         X_test[col] = X_test[col].cat.set_categories(X_train[col].cat.categories)
 
+    # -------------------------------
+    # FIXED sample weights logic
+    # -------------------------------
+    sample_weights = None
+
+    if weight_source_df is not None:
+        weight_cols = [c for c in weight_source_df.columns if "_weight" in c]
+
+        if len(weight_cols) > 0:
+            sample_weights = weight_source_df[weight_cols].prod(axis=1)
+
+            # stabilize
+            sample_weights = np.clip(sample_weights, 0.1, 10)
+            sample_weights = sample_weights / np.mean(sample_weights)
+
+            # IMPORTANT FIX: only use if SAME length
+            if len(sample_weights) != len(X_train):
+                print("[WARNING] Sample weights ignored due to length mismatch")
+                sample_weights = None
+            else:
+                sample_weights = sample_weights.values
+
+    # -------------------------------
+    # Model
+    # -------------------------------
     model = LGBMClassifier(
         verbosity=-1,
         objective="binary",
@@ -203,12 +235,9 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None):
         importance_type="gain"
     )
 
-    if weight_source_df is not None:
-        weight_cols = [col for col in weight_source_df.columns if "_weight" in col]
-        sample_weights = weight_source_df[weight_cols].mean(axis=1) if weight_cols else None
-    else:
-        sample_weights = None
-
+    # -------------------------------
+    # Train
+    # -------------------------------
     model.fit(X_train, y_train, sample_weight=sample_weights)
 
     train_probs = model.predict_proba(X_train)[:, 1]
@@ -217,7 +246,6 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None):
     test_probs = model.predict_proba(X_test)[:, 1]
 
     return model, train_auprc, test_probs
-
 
 def main():
 
@@ -330,10 +358,27 @@ def main():
 
     print("\nTraining Model After Mitigation...\n")
 
-    model, train_auprc, test_probs = train_and_evaluate(
+    # KEY FIX: you must apply mitigation logic to TRAIN too
+    mitigated_train_df = train_df.copy()
+
+    mitigated_train_df, _ = mitigate_categorical_drift(
         train_df,
+        train_df,
+        drift_table,
+        categorical_cols
+    )
+
+    mitigated_train_df, _ = mitigate_numerical_drift(
+        train_df,
+        mitigated_train_df,
+        drift_table,
+        numerical_cols
+    )
+
+    model, train_auprc, test_probs = train_and_evaluate(
+        mitigated_train_df,   # FIXED: now actually changed
         prod_df,
-        weight_source_df=None
+        weight_source_df=mitigated_train_df
     )
 
     print("========================================================")
