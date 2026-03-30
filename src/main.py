@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import os
 import time
+import textwrap
 
 from drift_detector import detect_dataset_drift
 from visualization import launch_dashboard, save_static_dashboard
@@ -12,6 +13,133 @@ from lightgbm import LGBMClassifier
 from sklearn.metrics import average_precision_score
 import joblib
 
+
+# =========================
+# TABLE FORMATTING HELPERS
+# =========================
+def format_grid_table(df, max_width=35):
+    import textwrap
+    import math
+    import re
+
+    df = df.copy()
+
+    # -------------------------
+    # CLEAN VALUES
+    # -------------------------
+    def clean(val):
+        if val is None:
+            return ""
+        if isinstance(val, float) and math.isnan(val):
+            return ""
+        return str(val)
+
+    df = df.map(clean)
+
+    # -------------------------
+    # EMOJI-AWARE WIDTH ESTIMATOR (NO LIBRARIES)
+    # -------------------------
+    emoji_pattern = re.compile(
+        "["  
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F680-\U0001F6FF"  # transport
+        "\U0001F700-\U0001F77F"
+        "\U0001F780-\U0001F7FF"
+        "\U0001F800-\U0001F8FF"
+        "\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FAFF"
+        "]+",
+        flags=re.UNICODE
+    )
+
+    def display_width(text):
+        # emojis count as 2 width in terminals
+        text = str(text)
+        emoji_count = len(emoji_pattern.findall(text))
+        base_len = len(text)
+        return base_len + emoji_count  # correction factor
+
+    # -------------------------
+    # COLUMN WIDTHS
+    # -------------------------
+    col_widths = {
+        col: min(
+            max(
+                display_width(col),
+                df[col].map(display_width).max()
+            ),
+            max_width
+        )
+        for col in df.columns
+    }
+
+    # -------------------------
+    # WRAP CELLS
+    # -------------------------
+    wrapped = {
+        col: df[col].apply(
+            lambda x: textwrap.wrap(x, col_widths[col]) or [""]
+        )
+        for col in df.columns
+    }
+
+    # -------------------------
+    # ROW HEIGHTS
+    # -------------------------
+    row_heights = [
+        max(len(wrapped[col].iloc[i]) for col in df.columns)
+        for i in range(len(df))
+    ]
+
+    # -------------------------
+    # BORDER LINE
+    # -------------------------
+    def make_line(left, mid, right):
+        return left + mid.join("─" * (col_widths[c] + 2) for c in df.columns) + right
+
+    lines = []
+
+    # TOP
+    lines.append(make_line("┌", "┬", "┐"))
+
+    # HEADER
+    header = "│ " + " │ ".join(
+        f"{col:<{col_widths[col]}}" for col in df.columns
+    ) + " │"
+    lines.append(header)
+
+    # HEADER SEPARATOR
+    lines.append(make_line("├", "┼", "┤"))
+
+    # -------------------------
+    # ROWS
+    # -------------------------
+    for i in range(len(df)):
+        for h in range(row_heights[i]):
+            row = []
+
+            for col in df.columns:
+                cell_lines = wrapped[col].iloc[i]
+                value = cell_lines[h] if h < len(cell_lines) else ""
+
+                pad = col_widths[col] - display_width(value)
+                row.append(value + " " * pad)
+
+            lines.append("│ " + " │ ".join(row) + " │")
+
+        lines.append(make_line("├", "┼", "┤"))
+
+    # -------------------------
+    # FINAL BORDER
+    # -------------------------
+    if len(lines) > 2:
+        lines[-1] = make_line("└", "┴", "┘")
+
+    return "\n".join(lines)
+# =========================
+# ORIGINAL FUNCTIONS
+# =========================
 
 def classify_severity(psi):
 
@@ -62,7 +190,40 @@ def print_initialization(train_df, test_df, categorical_cols, numerical_cols):
     print("--------------------------------------------------------\n")
 
 
-def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
+def print_drift_table_view(df):
+    df = df.copy()
+
+    df["Severity"] = df["Severity"].apply(lambda x: f"{severity_icon(x)} {x}")
+    print(format_grid_table(
+        df[[
+            "Feature",
+            "Type",
+            "PSI",
+            "Severity",
+            "Drift_Detected"
+        ]].head(15),
+        max_width=28
+    ))
+
+    print("\n\nExtra Statistical Details (Advanced)\n" + "-"*50)
+
+    extra_cols = [
+        "Feature",
+        "Chi2_Statistic",
+        "KS_Statistic",
+        "Wasserstein_Distance",
+        "p_value"
+    ]
+
+    # only keep columns that exist (safe fallback)
+    extra_cols = [c for c in extra_cols if c in df.columns]
+
+    print(format_grid_table(
+        df[extra_cols].head(15),
+        max_width=30
+    ))
+
+def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime, drift_runtime):
 
     drift_table = drift_table.copy()
 
@@ -77,6 +238,8 @@ def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
             return "Unknown"
 
     drift_table["Feature_Type"] = drift_table["Feature"].apply(get_feature_type)
+
+    drift_table["Drift_Type"] = drift_table["Feature_Type"]
 
     drifted = drift_table[drift_table["Drift_Detected"] == True]
     drifted_num = drifted[drifted["Feature_Type"] == "Numerical"].shape[0]
@@ -104,7 +267,7 @@ def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
     print(f"Dataset Drift Score      : {score:.3f}")
     print(f"Drifted Features         : {len(drifted)} / {len(drift_table)}")
 
-    coverage = (len(drift_table) / len(drift_table)) * 100
+    coverage = (len(drift_table) / (len(categorical_cols) + len(numerical_cols))) * 100
     print(f"Monitoring Coverage      : {coverage:.0f}%")
 
     print(f"Drifted Numerical Features   : {drifted_num}")
@@ -117,22 +280,9 @@ def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
     print(f"MODERATE DRIFT FEATURES  : {mod}")
     print(f"LOW DRIFT FEATURES       : {low}\n")
 
-    print("Top Drifted Features")
-    print("--------------------------------------------------------")
+    
 
-    ranked = drifted.sort_values("PSI", ascending=False)
-
-    for i, (_, row) in enumerate(ranked.iterrows(), start=1):
-
-        icon = severity_icon(row["Severity"])
-
-        feature_label = f"{row['Feature']} ({row['Feature_Type']})"
-
-        print(
-            f"{i:2d}. {feature_label:40} "
-            f"PSI={row['PSI']:.3f}   "
-            f"{icon} {row['Severity']}"
-        )
+    print_drift_table_view(drift_table)
 
     print("\nSystem Recommendations")
     print("--------------------------------------------------------")
@@ -154,7 +304,30 @@ def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
     print("outputs/drift_summary.txt")
     print("outputs/drift_dashboard.html")
 
-    print(f"\nAnalysis Runtime : {runtime:.2f} seconds\n")
+    print(f"\nTotal Runtime        : {runtime:.2f} seconds")
+    print(f"Drift Detection Time : {drift_runtime:.2f} seconds\n")
+
+
+def print_mitigation_table(cat_actions, num_actions):
+
+    print("\nMitigation Table")
+    print("--------------------------------------------------------")
+
+    rows = []
+
+    for f, info in cat_actions.items():
+        rows.append([f, "Categorical", info["method"]])
+
+    for f, info in num_actions.items():
+        rows.append([f, "Numerical", info["method"]])
+
+    if len(rows) == 0:
+        print("No mitigation applied.")
+        return
+
+    df = pd.DataFrame(rows, columns=["Feature", "Type", "Mitigation"])
+
+    print(format_grid_table(df))
 
 
 def save_summary_file(drift_table):
@@ -175,36 +348,26 @@ def save_summary_file(drift_table):
         ranked = drifted.sort_values("PSI", ascending=False)
 
         for _, row in ranked.iterrows():
-
             f.write(f"{row['Feature']} | PSI={row['PSI']:.3f}\n")
 
+
 def train_and_evaluate(train_df, test_df, weight_source_df=None):
+
     target = "ChurnStatus"
 
-    # -------------------------------
-    # Split features + target
-    # -------------------------------
     X_train = train_df.drop(columns=[target, "CustomerID"], errors="ignore")
     y_train = train_df[target].map({"Yes": 1, "No": 0})
 
     X_test = test_df.drop(columns=[target, "CustomerID"], errors="ignore")
     X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
 
-    # -------------------------------
-    # Handle categorical features
-    # -------------------------------
     cat_cols = X_train.select_dtypes(include=["object", "category", "string"]).columns
 
     for col in cat_cols:
         X_train[col] = X_train[col].astype("category")
         X_test[col] = X_test[col].astype("category")
-
-        # align categories safely
         X_test[col] = X_test[col].cat.set_categories(X_train[col].cat.categories)
 
-    # -------------------------------
-    # FIXED sample weights logic
-    # -------------------------------
     sample_weights = None
 
     if weight_source_df is not None:
@@ -212,21 +375,15 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None):
 
         if len(weight_cols) > 0:
             sample_weights = weight_source_df[weight_cols].prod(axis=1)
-
-            # stabilize
             sample_weights = np.clip(sample_weights, 0.1, 10)
             sample_weights = sample_weights / np.mean(sample_weights)
 
-            # IMPORTANT FIX: only use if SAME length
             if len(sample_weights) != len(X_train):
                 print("[WARNING] Sample weights ignored due to length mismatch")
                 sample_weights = None
             else:
                 sample_weights = sample_weights.values
 
-    # -------------------------------
-    # Model
-    # -------------------------------
     model = LGBMClassifier(
         verbosity=-1,
         objective="binary",
@@ -235,9 +392,6 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None):
         importance_type="gain"
     )
 
-    # -------------------------------
-    # Train
-    # -------------------------------
     model.fit(X_train, y_train, sample_weight=sample_weights)
 
     train_probs = model.predict_proba(X_train)[:, 1]
@@ -246,6 +400,7 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None):
     test_probs = model.predict_proba(X_test)[:, 1]
 
     return model, train_auprc, test_probs
+
 
 def main():
 
@@ -277,8 +432,9 @@ def main():
     numerical_cols = [c for c in numerical_cols if c not in exclude_cols]
 
     print_system_header()
-
     print_initialization(train_df, test_df, categorical_cols, numerical_cols)
+
+    drift_start = time.time()
 
     drift_table, drifted_features = detect_dataset_drift(
         train_df,
@@ -287,8 +443,9 @@ def main():
         numerical_cols
     )
 
-    os.makedirs("outputs", exist_ok=True)
+    drift_runtime = time.time() - drift_start
 
+    os.makedirs("outputs", exist_ok=True)
     drift_table.to_csv("outputs/drift_table.csv", index=False)
 
     runtime = time.time() - start
@@ -297,16 +454,12 @@ def main():
         drift_table,
         categorical_cols,
         numerical_cols,
-        runtime
+        runtime,
+        drift_runtime
     )
 
     save_summary_file(drift_table)
-
     save_static_dashboard(drift_table)
-
-    # ==========================================================
-    # BASELINE MODEL (BEFORE MITIGATION)
-    # ==========================================================
 
     print("\nTraining Baseline Model (Before Mitigation)...\n")
 
@@ -323,10 +476,6 @@ def main():
         baseline_test_auprc = average_precision_score(y_test, baseline_test_probs)
         print(f"Baseline Test AU-PRC  : {baseline_test_auprc:.4f}")
 
-    # ==========================================================
-    # DRIFT MITIGATION
-    # ==========================================================
-
     prod_df, cat_actions = mitigate_categorical_drift(
         train_df,
         test_df,
@@ -341,24 +490,14 @@ def main():
         numerical_cols
     )
 
-    print("\nMitigation Summary")
-    print("--------------------------------------------------------")
+    
 
-    for f, info in cat_actions.items():
-        print(f"{f} → {info['method']}")
-
-    for f, info in num_actions.items():
-        print(f"{f} → {info['method']}")
+    print_mitigation_table(cat_actions, num_actions)
 
     print(f"\nTotal mitigated features: {len(cat_actions) + len(num_actions)}")
 
-    # ==========================================================
-    # MODEL AFTER MITIGATION
-    # ==========================================================
-
     print("\nTraining Model After Mitigation...\n")
 
-    # KEY FIX: you must apply mitigation logic to TRAIN too
     mitigated_train_df = train_df.copy()
 
     mitigated_train_df, _ = mitigate_categorical_drift(
@@ -376,7 +515,7 @@ def main():
     )
 
     model, train_auprc, test_probs = train_and_evaluate(
-        mitigated_train_df,   # FIXED: now actually changed
+        mitigated_train_df,
         prod_df,
         weight_source_df=mitigated_train_df
     )
@@ -403,7 +542,6 @@ def main():
         improvement_test = mitigated_test_auprc - baseline_test_auprc
         print(f"Test Improvement       : {improvement_test:+.4f}")
 
-    # Save model
     joblib.dump(model, "model.joblib")
 
     pred_df = pd.DataFrame({
