@@ -71,18 +71,15 @@ def mitigate_categorical_drift(train_df, prod_df, drift_table, categorical_cols)
         adjusted_series = adjust_distribution(train_series, prod_series)
 
         weights = reweight_categories(train_series, adjusted_series)
-        weighted_series = apply_reweighting(adjusted_series, weights)
+        weight_series = apply_reweighting(adjusted_series, weights)
 
-        _, recalibrated_series, mapping = recalibrate_encoding(
-            train_series,
-            adjusted_series
+        train_encoded, prod_encoded, mapping = recalibrate_encoding(
+            train_series, adjusted_series
         )
 
         prod_df[feature] = adjusted_series
-
-        prod_df[f"{feature}_weight"] = weighted_series
-
-        prod_df[f"{feature}_encoded"] = recalibrated_series
+        prod_df[f"{feature}_weight"] = weight_series
+        prod_df[f"{feature}_encoded"] = prod_encoded
 
         mitigation_actions[feature] = {
             "method": "adjustment + weight exposure + encoding recalibration",
@@ -160,25 +157,14 @@ def mitigate_numerical_drift(train_df, prod_df, drift_table, numerical_cols):
         train_series = train_df[feature]
         prod_series = prod_df[feature]
 
-        # --- Step 1: Sample Reweighting ---
         weight = compute_sample_weights(train_series, prod_series)
+
         weighted_series = apply_numeric_reweighting(prod_series, weight)
-
-        # --- Step 2: Normalization Adjustment ---
-        normalized_series = normalize_to_training_distribution(
-            train_series,
-            prod_series
-        )
-
-        # --- Step 3: Feature Recalibration ---
-        recalibrated_series = recalibrate_feature_scale(
-            train_series,
-            normalized_series
-        )
+        normalized_series = normalize_to_training_distribution(train_series, weighted_series)
+        recalibrated_series = recalibrate_feature_scale(train_series, normalized_series)
 
         prod_df[feature] = recalibrated_series
-
-        prod_df[f"{feature}_weight"] = weighted_series
+        prod_df[f"{feature}_weight"] = np.full(len(prod_df), weight)
 
         mitigation_actions[feature] = {
             "method": "sample_reweighting + normalization + feature_recalibration",

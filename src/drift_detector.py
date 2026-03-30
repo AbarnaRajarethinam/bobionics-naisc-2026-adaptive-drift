@@ -26,8 +26,8 @@ def calculate_categorical_psi(train_series, test_series):
     psi = 0
 
     for cat in categories:
-        train_pct = train_dist.get(cat, EPS)
-        test_pct = test_dist.get(cat, EPS)
+        train_pct = max(train_dist.get(cat, 0), EPS)
+        test_pct = max(test_dist.get(cat, 0), EPS)
 
         psi += (train_pct - test_pct) * np.log(train_pct / test_pct)
 
@@ -78,7 +78,7 @@ def detect_categorical_drift(train_df, prod_df, categorical_cols):
 
         severity = classify_psi(psi)
 
-        drift_flag = (psi >= 0.25) or (p_value <= 0.05)
+        drift_flag = (psi >= 0.1) or (p_value < 0.05)
 
         results.append({
             "Feature": col,
@@ -87,6 +87,7 @@ def detect_categorical_drift(train_df, prod_df, categorical_cols):
             "PSI_Severity": severity,
             "Chi2_Statistic": round(chi2, 4) if not np.isnan(chi2) else np.nan,
             "p_value": round(p_value, 4),
+            "Stat_Drift": p_value < 0.05,
             "Drift_Detected": drift_flag
         })
 
@@ -147,7 +148,7 @@ def detect_numerical_drift(train_df, prod_df, numerical_cols):
 
         severity = classify_psi(psi)
 
-        drift_flag = (psi >= 0.25) or (p_value <= 0.05)
+        drift_flag = (psi >= 0.1) or (p_value < 0.05)
 
         results.append({
             "Feature": col,
@@ -156,6 +157,7 @@ def detect_numerical_drift(train_df, prod_df, numerical_cols):
             "PSI_Severity": severity,
             "KS_Statistic": round(ks_stat, 4),
             "p_value": round(p_value, 4),
+            "Stat_Drift": p_value < 0.05,
             "Wasserstein_Distance": round(wasserstein, 4),
             "Drift_Detected": drift_flag
         })
