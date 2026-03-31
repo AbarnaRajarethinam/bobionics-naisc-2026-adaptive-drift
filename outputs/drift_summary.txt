@@ -1,0 +1,21 @@
+NAISC Drift Monitoring Summary
+
+Total Features: 43
+Drifted Features: 14
+
+Drift Leaderboard
+
+Contract | PSI=25.956
+Month | PSI=24.635
+TransactionMode | PSI=2.723
+DigitalInvoicing | PSI=2.203
+LocationCity | PSI=0.469
+AvgMonthlyLongDistanceCharges | PSI=0.278
+NumberofReferrals | PSI=0.172
+ReferredaFriend | PSI=0.105
+MonthlyCharge | PSI=0.095
+PrioritySupport | PSI=0.086
+TotalLongDistanceCharges | PSI=0.050
+TotalCharges | PSI=0.006
+Longitude | PSI=0.002
+UserGender | PSI=0.001
