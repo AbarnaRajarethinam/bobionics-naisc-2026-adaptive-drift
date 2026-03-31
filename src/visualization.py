@@ -3,36 +3,126 @@ import plotly.express as px
 
 from dash import Dash, dcc, html, Input, Output
 import numpy as np
+import plotly.io as pio
+
+pio.templates.default = "plotly_dark"
+
+
+# =========================
+#  PROFESSIONAL THEME 
+# =========================
+THEME = {
+    "bg": "#0b1220",        # deep dashboard background
+    "panel": "#111827",     # card surface
+    "card": "#1f2937",      # inner KPI cards
+    "text": "#e5e7eb",      # primary text
+    "muted": "#9ca3af",     # secondary text
+    "accent": "#3b82f6"     # modern blue accent
+}
+
+
+# =========================
+#  UI SYSTEM 
+# =========================
+UI = {
+    "radius": "16px",
+    "gap": "16px",
+    "padding": "16px",
+    "shadow": "0px 6px 18px rgba(0,0,0,0.35)",
+    "border": "1px solid rgba(255,255,255,0.08)"
+}
+
+
+def chart_card(fig):
+    return html.Div([
+        dcc.Graph(figure=fig)
+    ], style={
+        "backgroundColor": THEME["panel"],
+        "borderRadius": UI["radius"],
+        "padding": UI["padding"],
+        "margin": "12px",
+        "boxShadow": UI["shadow"],
+        "border": UI["border"]
+    })
+
+
+# =========================
+# KPI CARD HEADER ACCENT
+# =========================
+def accent_bar():
+    return html.Div(style={
+        "height": "4px",
+        "width": "40px",
+        "background": THEME["accent"],
+        "borderRadius": "4px",
+        "marginBottom": "10px"
+    })
 
 
 # ---------------------------
-# SUMMARY CARDS
+# SUMMARY CARDS 
 # ---------------------------
 def create_summary_cards(metrics):
 
     card_style = {
-        "background": "#ffffff",
-        "borderRadius": "10px",
-        "padding": "20px",
-        "margin": "10px",
-        "textAlign": "center",
-        "boxShadow": "0px 2px 6px rgba(0,0,0,0.1)",
-        "width": "15%",
-        "display": "inline-block"
+        "flex": "1",
+        "minWidth": "180px",
+        "padding": "16px",
+        "borderRadius": "16px",
+        "background": "linear-gradient(135deg, #1f2937, #111827)",
+        "boxShadow": UI["shadow"],
+        "border": UI["border"],
+        "color": THEME["text"]
     }
 
     return html.Div([
-        html.Div([html.H4("Total Features"), html.H2(metrics["total_features"])], style=card_style),
-        html.Div([html.H4("Drifted Features"), html.H2(metrics["drifted_features"])], style=card_style),
-        html.Div([html.H4("Numerical Features"), html.H2(metrics["numerical_features"])], style=card_style),
-        html.Div([html.H4("Categorical Features"), html.H2(metrics["categorical_features"])], style=card_style),
-        html.Div([html.H4("Average PSI"), html.H2(metrics["avg_psi"])], style=card_style),
-        html.Div([html.H4("Max PSI"), html.H2(metrics["max_psi"])], style=card_style)
-    ], style={"display": "flex", "justifyContent": "center", "flexWrap": "wrap"})
+        html.Div([
+            accent_bar(),
+            html.H4("Total Features", style={"color": THEME["muted"]}),
+            html.H2(metrics["total_features"])
+        ], style=card_style),
+
+        html.Div([
+            accent_bar(),
+            html.H4("Drifted Features", style={"color": THEME["muted"]}),
+            html.H2(metrics["drifted_features"])
+        ], style=card_style),
+
+        html.Div([
+            accent_bar(),
+            html.H4("Numerical Features", style={"color": THEME["muted"]}),
+            html.H2(metrics["numerical_features"])
+        ], style=card_style),
+
+        html.Div([
+            accent_bar(),
+            html.H4("Categorical Features", style={"color": THEME["muted"]}),
+            html.H2(metrics["categorical_features"])
+        ], style=card_style),
+
+        html.Div([
+            accent_bar(),
+            html.H4("Average PSI", style={"color": THEME["muted"]}),
+            html.H2(metrics["avg_psi"])
+        ], style=card_style),
+
+        html.Div([
+            accent_bar(),
+            html.H4("Max PSI", style={"color": THEME["muted"]}),
+            html.H2(metrics["max_psi"])
+        ], style=card_style)
+
+    ], style={
+        "display": "flex",
+        "gap": "14px",
+        "flexWrap": "wrap",
+        "marginBottom": "20px",
+        "padding": "10px"
+    })
 
 
 # ---------------------------
-# METRICS
+# METRICS (
 # ---------------------------
 def compute_summary_metrics(train_df, prod_df, drift_table, categorical_cols, numerical_cols):
 
@@ -43,13 +133,13 @@ def compute_summary_metrics(train_df, prod_df, drift_table, categorical_cols, nu
         "drifted_features": len(drifted),
         "numerical_features": len(numerical_cols),
         "categorical_features": len(categorical_cols),
-        "avg_psi": round(drift_table["PSI"].mean(), 3),
-        "max_psi": round(drift_table["PSI"].max(), 3)
+        "avg_psi": round(drift_table["PSI"].fillna(0).mean(), 3),
+        "max_psi": round(drift_table["PSI"].fillna(0).max(), 3)
     }
 
 
 # ---------------------------
-# SEVERITY
+# SEVERITY (UNCHANGED)
 # ---------------------------
 def classify_severity(psi):
 
@@ -65,7 +155,7 @@ SEVERITY_ORDER = ["LOW", "MODERATE", "HIGH"]
 
 
 # ---------------------------
-# STATIC EXPORT
+# STATIC EXPORT (STYLE ONLY)
 # ---------------------------
 def save_static_dashboard(drift_table):
 
@@ -82,11 +172,30 @@ def save_static_dashboard(drift_table):
         category_orders={"Severity": SEVERITY_ORDER}
     )
 
+    fig.update_layout(
+        paper_bgcolor=THEME["bg"],
+        plot_bgcolor=THEME["bg"],
+        font=dict(color=THEME["text"]),
+        title_font=dict(size=18),
+        margin=dict(l=40, r=40, t=60, b=40)
+    )
+
+    fig.add_annotation(
+        text="PSI Guide: <0.1 Low | 0.1–0.25 Moderate | >0.25 High Drift",
+        xref="paper", yref="paper",
+        x=0.5, y=1.08,
+        showarrow=False,
+        font=dict(color=THEME["muted"], size=12)
+    )
+
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=False)
+
     fig.write_html("outputs/drift_dashboard.html")
 
 
 # ---------------------------
-# NUMERICAL DRIFT
+# NUMERICAL DRIFT (STYLE ONLY)
 # ---------------------------
 def create_numerical_drift_plot(drift_table):
 
@@ -104,37 +213,47 @@ def create_numerical_drift_plot(drift_table):
         color="PSI"
     )
 
-    fig.add_vline(x=0.1, line_dash="dash", line_color="orange",
-                  annotation_text="Moderate Drift (0.1)")
-
-    fig.add_vline(x=0.25, line_dash="dash", line_color="red",
-                  annotation_text="Severe Drift (0.25)")
+    fig.add_vline(x=0.1, line_dash="dash", line_color="orange")
+    fig.add_vline(x=0.25, line_dash="dash", line_color="red")
 
     fig.add_annotation(
-        text="PSI measures distribution shift between train vs production",
+        text="Orange = Moderate threshold | Red = High drift threshold",
         xref="paper", yref="paper",
-        x=0.5, y=1.15,
-        showarrow=False
+        x=0.5, y=1.08,
+        showarrow=False,
+        font=dict(color=THEME["muted"], size=12)
     )
 
-    fig.update_layout(height=500)
+    fig.update_layout(
+        paper_bgcolor=THEME["bg"],
+        plot_bgcolor=THEME["bg"],
+        font=dict(color=THEME["text"]),
+        height=500,
+        margin=dict(l=40, r=40, t=60, b=40)
+    )
+
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=False)
+
     return fig
 
 
-# ---------------------------
-# 🔥 FIXED HEATMAP (NO category_orders)
-# ---------------------------
+# -----------
+# HEATMAP 
+# ----------
 def create_drift_heatmap(drift_table):
 
     df = drift_table.copy()
+    df = df.reset_index(drop=True)
     df = df.dropna(subset=["Type", "PSI"])
+
     df["Severity"] = df["PSI"].apply(classify_severity)
 
-    df = df.reset_index(drop=True)
+    heatmap_data = pd.crosstab(
+        df["Type"].values,
+        df["Severity"].values
+    )
 
-    heatmap_data = pd.crosstab(df["Type"], df["Severity"])
-
-    # ✅ FORCE ORDER MANUALLY (IMPORTANT FIX)
     for col in SEVERITY_ORDER:
         if col not in heatmap_data.columns:
             heatmap_data[col] = 0
@@ -145,23 +264,29 @@ def create_drift_heatmap(drift_table):
         heatmap_data,
         text_auto=True,
         title="Drift Heatmap: Feature Type vs Severity",
-        color_continuous_scale="Reds"
+        color_continuous_scale="Blues"
     )
 
     fig.add_annotation(
-        text="Shows where drift is concentrated across feature types",
+        text="Shows how drift severity is distributed across feature types",
         xref="paper", yref="paper",
-        x=0.5, y=1.15,
-        showarrow=False
+        x=0.5, y=1.08,
+        showarrow=False,
+        font=dict(color=THEME["muted"], size=12)
     )
 
-    fig.update_layout(height=400)
+    fig.update_layout(
+        paper_bgcolor=THEME["bg"],
+        font=dict(color=THEME["text"]),
+        height=420,
+        margin=dict(l=40, r=40, t=60, b=40)
+    )
 
     return fig
 
 
 # ---------------------------
-# MAIN DASHBOARD
+# MAIN DASHBOARD (UI UPGRADE ONLY)
 # ---------------------------
 def launch_dashboard(train_df, prod_df, drift_table, categorical_cols, numerical_cols):
 
@@ -181,86 +306,109 @@ def launch_dashboard(train_df, prod_df, drift_table, categorical_cols, numerical
     summary_cards = create_summary_cards(metrics)
 
     numerical_fig = create_numerical_drift_plot(drift_table)
+    heatmap_fig = create_drift_heatmap(drift_table)
 
-    # ---------------------------
-    # SEVERITY ORDER FIX
-    # ---------------------------
-    severity_counts = drift_table["Severity"].value_counts().reset_index()
-    severity_counts.columns = ["Severity", "Count"]
-
-    severity_counts["Severity"] = pd.Categorical(
-        severity_counts["Severity"],
-        categories=SEVERITY_ORDER,
-        ordered=True
+    leaderboard_fig = px.bar(
+        drifted.sort_values("PSI", ascending=False) if not drifted.empty else drift_table.head(10),
+        x="PSI",
+        y="Feature",
+        orientation="h",
+        color="Severity",
+        title="Drift Risk Leaderboard"
     )
 
-    severity_counts = severity_counts.sort_values("Severity")
+    leaderboard_fig.add_annotation(
+        text="Higher PSI = higher drift risk",
+        xref="paper", yref="paper",
+        x=0.5, y=1.08,
+        showarrow=False,
+        font=dict(color=THEME["muted"], size=12)
+    )
+
+    leaderboard_fig.update_layout(
+        paper_bgcolor=THEME["bg"],
+        plot_bgcolor=THEME["bg"],
+        font=dict(color=THEME["text"]),
+        height=450,
+        margin=dict(l=40, r=40, t=60, b=40)
+    )
+
+    leaderboard_fig.update_xaxes(showgrid=False)
+    leaderboard_fig.update_yaxes(showgrid=False)
+
+    severity_counts = drift_table["Severity"].value_counts().reset_index()
+    severity_counts.columns = ["Severity", "Count"]
 
     severity_fig = px.bar(
         severity_counts,
         x="Severity",
         y="Count",
         color="Severity",
-        title="Drift Severity Distribution"
+        title="System Drift Health"
     )
 
     severity_fig.add_annotation(
-        text="LOW → MODERATE → HIGH drift distribution",
+        text="Overall distribution of drift severity across all features",
         xref="paper", yref="paper",
-        x=0.5, y=1.15,
-        showarrow=False
+        x=0.5, y=1.08,
+        showarrow=False,
+        font=dict(color=THEME["muted"], size=12)
     )
 
-    # ---------------------------
-    # LEADERBOARD
-    # ---------------------------
-    if drifted.empty:
-        leaderboard_fig = px.bar(
-            drift_table.sort_values("PSI", ascending=False).head(10),
-            x="PSI",
-            y="Feature",
-            orientation="h",
-            title="Top Features by PSI"
-        )
-    else:
-        leaderboard_fig = px.bar(
-            drifted.sort_values("PSI", ascending=False),
-            x="PSI",
-            y="Feature",
-            orientation="h",
-            color="Severity",
-            title="Drifted Features Leaderboard"
-        )
-
-    leaderboard_fig.add_annotation(
-        text="Higher PSI = higher risk features",
-        xref="paper", yref="paper",
-        x=0.5, y=1.15,
-        showarrow=False
+    severity_fig.update_layout(
+        paper_bgcolor=THEME["bg"],
+        plot_bgcolor=THEME["bg"],
+        font=dict(color=THEME["text"])
     )
 
-    # ---------------------------
-    # HEATMAP 
-    # ---------------------------
-    heatmap_fig = create_drift_heatmap(drift_table)
-    
-
-    # ---------------------------
-    # DASHBOARD
-    # ---------------------------
     app.layout = html.Div([
 
-        html.H1("Adaptive Drift Monitoring System", style={"textAlign": "center"}),
+        html.Div(
+            "Adaptive Drift Monitoring System",
+            style={
+                "textAlign": "center",
+                "fontSize": "30px",
+                "fontWeight": "bold",
+                "color": THEME["text"],
+                "padding": "15px"
+            }
+        ),
+         html.Div(
+        "Real-time monitoring of feature distribution drift between training and production data.",
+        style={
+            "textAlign": "center",
+            "fontSize": "14px",
+            "color": THEME["muted"],
+            "marginBottom": "15px"
+        }
+    ),
 
         summary_cards,
 
-        dcc.Graph(figure=severity_fig),
-        dcc.Graph(figure=leaderboard_fig),
-        dcc.Graph(figure=numerical_fig),
-        dcc.Graph(figure=heatmap_fig),
-        
+        html.Div([
+            chart_card(severity_fig),
+            chart_card(leaderboard_fig),
+        ], style={
+            "display": "grid",
+            "gridTemplateColumns": "1fr 1fr",
+            "gap": "16px"
+        }),
 
-        html.H3("Feature Drift Explorer", style={"textAlign": "center"}),
+        html.Div([
+            chart_card(numerical_fig),
+            chart_card(heatmap_fig),
+        ], style={
+            "display": "grid",
+            "gridTemplateColumns": "1fr 1fr",
+            "gap": "16px"
+        }),
+
+        html.Hr(style={"border": "1px solid rgba(255,255,255,0.08)"}),
+
+        html.H3(
+            "Feature Drift Explorer",
+            style={"textAlign": "center", "color": THEME["text"]}
+        ),
 
         dcc.Dropdown(
             id="feature_dropdown",
@@ -270,7 +418,12 @@ def launch_dashboard(train_df, prod_df, drift_table, categorical_cols, numerical
         ),
 
         dcc.Graph(id="feature_plot")
-    ])
+
+    ], style={
+        "backgroundColor": THEME["bg"],
+        "minHeight": "100vh",
+        "paddingBottom": "40px"
+    })
 
     @app.callback(
         Output("feature_plot", "figure"),
@@ -290,12 +443,20 @@ def launch_dashboard(train_df, prod_df, drift_table, categorical_cols, numerical
             df = df.reset_index()
             df.columns = ["Category", "Train", "Production"]
 
-            return px.bar(
+            fig = px.bar(
                 df,
                 x="Category",
                 y=["Train", "Production"],
                 barmode="group",
                 title=f"{feature} Distribution Drift"
+            )
+
+            fig.add_annotation(
+                text="Compares category distribution between Train vs Production",
+                xref="paper", yref="paper",
+                x=0.5, y=1.08,
+                showarrow=False,
+                font=dict(color=THEME["muted"], size=12)
             )
 
         else:
@@ -308,7 +469,7 @@ def launch_dashboard(train_df, prod_df, drift_table, categorical_cols, numerical
 
             combined = pd.concat([train_data, prod_data])
 
-            return px.histogram(
+            fig = px.histogram(
                 combined,
                 x=feature,
                 color="dataset",
@@ -316,5 +477,21 @@ def launch_dashboard(train_df, prod_df, drift_table, categorical_cols, numerical
                 opacity=0.6,
                 title=f"{feature} Distribution Comparison"
             )
+
+            fig.add_annotation(
+                text="Overlaid histogram comparing feature distributions",
+                xref="paper", yref="paper",
+                x=0.5, y=1.08,
+                showarrow=False,
+                font=dict(color=THEME["muted"], size=12)
+            )
+
+        fig.update_layout(
+            paper_bgcolor=THEME["bg"],
+            plot_bgcolor=THEME["bg"],
+            font=dict(color=THEME["text"])
+        )
+
+        return fig
 
     app.run(debug=False)
