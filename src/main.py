@@ -182,7 +182,6 @@ def print_initialization(train_df, test_df, categorical_cols, numerical_cols):
     print("\nRunning Drift Detection Engine...")
     print("--------------------------------------------------------\n")
 
-
 def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
 
     drift_table = drift_table.copy()
@@ -243,9 +242,13 @@ def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
 
     display_df = drift_table.copy()
 
-    display_df["Severity"] = display_df["PSI"].apply(classify_severity)
-    display_df["Type"] = display_df["Feature_Type"]
+    # ✅ Build severity with icons
+    display_df["Severity_Level"] = display_df["PSI"].apply(classify_severity)
+    display_df["Severity"] = display_df["Severity_Level"].apply(
+        lambda lvl: f"{severity_icon(lvl)} {lvl}"
+    )
 
+    display_df["Type"] = display_df["Feature_Type"]
     display_df["Stat"] = display_df["Stat_Drift"].apply(lambda x: "YES" if x else "NO")
 
     cols = ["Feature", "Type", "PSI", "p_value", "Stat", "Severity", "Drift_Detected"]
@@ -292,7 +295,6 @@ def print_drift_report(drift_table, categorical_cols, numerical_cols, runtime):
     print("outputs/drift_dashboard.html")
 
     print(f"\nAnalysis Runtime : {runtime:.2f} seconds\n")
-
 
 def save_summary_file(drift_table):
 
@@ -381,6 +383,7 @@ def train_and_evaluate(train_df, test_df, weight_source_df=None, sample_weights=
 
     return model, train_auprc, test_probs
 
+
 def compute_sample_weights(train_df, test_df, drift_table):
 
     weights = np.ones(len(train_df))
@@ -396,7 +399,8 @@ def compute_sample_weights(train_df, test_df, drift_table):
 
         col_values = train_df[feature]
 
-        if col_values.dtype == "object":
+        # TYPE CHECK
+        if not pd.api.types.is_numeric_dtype(col_values):
             weights *= col_values.map(lambda x: 1 / (1 + psi)).fillna(1)
         else:
             weights *= 1 / (
@@ -406,8 +410,6 @@ def compute_sample_weights(train_df, test_df, drift_table):
     weights = weights / np.mean(weights)
 
     return weights
-
-
 
 def main():
 
