@@ -187,6 +187,12 @@ Inference output containing:
 * CustomerID
 * Churn probability score
 
+### NAISC REPORT.pdf
+
+Detailed technical report describing the full system architecture, drift detection framework, mitigation strategies, experimental results, and dashboard design.
+
+This document provides a comprehensive explanation of the methodology and findings used in the NAISC Singtel 2026 Adaptive Drift Intelligence Challenge submission.
+
 ---
 
 ## 8. Interactive Monitoring Dashboard
